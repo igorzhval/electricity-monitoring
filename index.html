@@ -207,14 +207,16 @@
     </div>
   </div>
 
-  <!-- Firebase SDK -->
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-app.js";
-    import { getFirestore, doc, getDoc, setDoc, getDocs, collection } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-firestore.js";
+  <!-- Firebase SDKs -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
 
+  <script>
+    // Firebase конфігурація
     const firebaseConfig = {
       apiKey: "AIzaSyBNoc5gDs5oiKMM2vfi9SLV0V81YIQlhIw",
       authDomain: "electricitymonitoring-611d6.firebaseapp.com",
+      databaseURL: "https://electricitymonitoring-611d6-default-rtdb.firebaseio.com",
       projectId: "electricitymonitoring-611d6",
       storageBucket: "electricitymonitoring-611d6.appspot.com",
       messagingSenderId: "48991179626",
@@ -222,34 +224,41 @@
       measurementId: "G-380QK2FKVP"
     };
 
-    const app = initializeApp(firebaseConfig);
-    const db = getFirestore(app);
+    // Ініціалізація Firebase
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
 
     let flats = [];
 
-    async function initData() {
-      flats = [];
-      const flatsCol = collection(db, 'flats');
-      const flatsSnapshot = await getDocs(flatsCol);
-
-      if (flatsSnapshot.empty) {
-        // Створимо 300 пустих квартир
-        for (let i = 1; i <= 300; i++) {
-          flats.push({ number: i, consumption: {} });
-          await setDoc(doc(db, "flats", i.toString()), { consumption: {} });
+    function initData() {
+      const flatsRef = db.ref('flats');
+      flatsRef.once('value').then(snapshot => {
+        if (snapshot.exists()) {
+          flats = snapshot.val();
+        } else {
+          flats = Array.from({ length: 300 }, (_, i) => ({
+            number: i + 1,
+            consumption: {}
+          }));
+          flatsRef.set(flats);
         }
-      } else {
-        flatsSnapshot.forEach(docSnap => {
-          flats.push({ number: parseInt(docSnap.id), consumption: docSnap.data().consumption || {} });
-        });
-      }
-      populateFlatSelect();
+        populateFlatSelect();
+      }).catch(error => {
+        alert('Помилка завантаження даних: ' + error);
+      });
+    }
+
+    function saveData() {
+      const flatsRef = db.ref('flats');
+      flatsRef.set(flats).catch(error => {
+        alert('Помилка збереження даних: ' + error);
+      });
     }
 
     function populateFlatSelect() {
       const select = document.getElementById('flat-select');
       select.innerHTML = '<option value="">— Виберіть квартиру —</option>';
-      flats.sort((a,b) => a.number - b.number).forEach(flat => {
+      flats.forEach(flat => {
         const opt = document.createElement('option');
         opt.value = flat.number;
         opt.textContent = `Квартира №${flat.number}`;
@@ -257,7 +266,7 @@
       });
     }
 
-    async function showFlatForm() {
+    function showFlatForm() {
       const selected = document.getElementById('flat-select').value;
       const form = document.getElementById('flat-form');
       const dataBlock = document.getElementById('existing-data');
@@ -267,16 +276,12 @@
         return;
       }
       form.classList.remove('hidden');
-
-      // Завантажуємо свіжі дані по квартирі
-      const flatDoc = await getDoc(doc(db, "flats", selected));
-      if (!flatDoc.exists()) {
+      const flat = flats.find(f => f.number === parseInt(selected));
+      if (!flat) {
         dataBlock.innerHTML = '<i>Немає даних.</i>';
         return;
       }
-      const flat = { number: parseInt(selected), consumption: flatDoc.data().consumption || {} };
-
-      const entries = Object.entries(flat.consumption);
+      const entries = Object.entries(flat.consumption || {});
       if (entries.length === 0) {
         dataBlock.innerHTML = '<i>Дані відсутні.</i>';
         return;
@@ -290,7 +295,7 @@
       dataBlock.innerHTML = html;
     }
 
-    async function saveConsumption() {
+    function saveConsumption() {
       const flatNum = parseInt(document.getElementById('flat-select').value);
       const month = document.getElementById('flat-month').value;
       const value = parseFloat(document.getElementById('flat-value').value);
@@ -299,41 +304,23 @@
         alert("❗ Заповніть усі поля коректно.");
         return;
       }
-
-      const flatRef = doc(db, "flats", flatNum.toString());
-      const flatSnap = await getDoc(flatRef);
-      if (!flatSnap.exists()) {
+      const flat = flats.find(f => f.number === flatNum);
+      if (!flat) {
         alert("❗ Квартира не знайдена.");
         return;
       }
-
-      const consumption = flatSnap.data().consumption || {};
-      consumption[month] = value;
-      await setDoc(flatRef, { consumption }, { merge: true });
-
-      // Оновити локальний масив flats (щоб звіт працював)
-      const flatIndex = flats.findIndex(f => f.number === flatNum);
-      if(flatIndex !== -1) flats[flatIndex].consumption = consumption;
-
+      flat.consumption[month] = value;
+      saveData();
       showFlatForm();
-
       document.getElementById('flat-month').value = '';
       document.getElementById('flat-value').value = '';
     }
 
-    async function deleteConsumption(flatNum, month) {
-      const flatRef = doc(db, "flats", flatNum.toString());
-      const flatSnap = await getDoc(flatRef);
-      if (!flatSnap.exists()) return;
-
-      const consumption = flatSnap.data().consumption || {};
-      if (consumption[month] !== undefined) {
-        delete consumption[month];
-        await setDoc(flatRef, { consumption }, { merge: true });
-
-        const flatIndex = flats.findIndex(f => f.number === flatNum);
-        if(flatIndex !== -1) flats[flatIndex].consumption = consumption;
-
+    function deleteConsumption(flatNum, month) {
+      const flat = flats.find(f => f.number === flatNum);
+      if (flat && flat.consumption[month] !== undefined) {
+        delete flat.consumption[month];
+        saveData();
         showFlatForm();
       }
     }
@@ -400,13 +387,6 @@
 
       XLSX.writeFile(wb, `Звіт_${from}_до_${to}.xlsx`);
     }
-
-    window.showSection = showSection; // щоб виклики з onclick працювали
-    window.saveConsumption = saveConsumption;
-    window.deleteConsumption = deleteConsumption;
-    window.generateReport = generateReport;
-    window.exportToExcel = exportToExcel;
-    window.showFlatForm = showFlatForm;
 
     window.onload = initData;
   </script>
