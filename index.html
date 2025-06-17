@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8" />
+  <title>Облік електроенергії</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  
+  <!-- SheetJS для експорту -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+  <style>
+    :root {
+      --primary: #2e86de;
+      --background: #f1f2f6;
+      --card: #ffffffcc;
+      --accent: #dcdde1;
+      --text: #2f3640;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", sans-serif;
+      background: linear-gradient(to bottom right, #dff9fb, #f6e58d);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    header {
+      background-color: var(--primary);
+      color: white;
+      padding: 20px;
+      text-align: center;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+    }
+
+    header h1 {
+      margin: 0;
+      font-size: 28px;
+    }
+
+    nav {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      margin-top: 15px;
+      flex-wrap: wrap;
+    }
+
+    nav button {
+      background: white;
+      color: var(--primary);
+      border: 2px solid var(--primary);
+      padding: 10px 15px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: bold;
+      transition: 0.2s;
+    }
+
+    nav button.active,
+    nav button:hover {
+      background: var(--primary);
+      color: white;
+    }
+
+    .container {
+      max-width: 800px;
+      margin: 20px auto;
+      padding: 10px;
+    }
+
+    .card {
+      background-color: var(--card);
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      margin-bottom: 20px;
+      backdrop-filter: blur(5px);
+    }
+
+    select,
+    input {
+      padding: 10px;
+      width: 100%;
+      max-width: 300px;
+      margin: 10px 0;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      font-size: 16px;
+    }
+
+    label {
+      font-weight: bold;
+      display: block;
+      margin-top: 15px;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .btn {
+      padding: 10px;
+      background-color: var(--primary);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      margin-top: 10px;
+      font-size: 16px;
+      transition: background 0.2s;
+    }
+
+    .btn:hover {
+      background-color: #1b4f9c;
+    }
+
+    #report-output {
+      background: var(--accent);
+      padding: 15px;
+      border-radius: 6px;
+      white-space: pre-wrap;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    ul {
+      padding-left: 20px;
+    }
+
+    li {
+      margin-bottom: 5px;
+    }
+
+    li button {
+      margin-left: 5px;
+      font-size: 14px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    @media (max-width: 600px) {
+      nav {
+        flex-direction: column;
+        align-items: center;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>Облік електроенергії</h1>
+    <p>Будинок: пров. генерала Вишневського 13/1</p>
+    <nav>
+      <button onclick="showSection('flats')" id="btn-flats" class="active">Квартири</button>
+      <button onclick="showSection('report')" id="btn-report">Звіт</button>
+    </nav>
+  </header>
+
+  <div class="container">
+    <!-- Квартири -->
+    <div class="card" id="section-flats">
+      <h2>Вибір квартири</h2>
+      <select id="flat-select" onchange="showFlatForm()">
+        <option value="">— Виберіть квартиру —</option>
+      </select>
+
+      <div id="flat-form" class="form-group hidden">
+        <label for="flat-month">Місяць</label>
+        <input type="month" id="flat-month" />
+
+        <label for="flat-value">Споживання (кВт·г)</label>
+        <input type="number" id="flat-value" placeholder="0" />
+
+        <button class="btn" onclick="saveConsumption()">💾 Зберегти</button>
+
+        <hr />
+        <h3>Внесені показники:</h3>
+        <div id="existing-data"></div>
+      </div>
+    </div>
+
+    <!-- Звіт -->
+    <div class="card hidden" id="section-report">
+      <h2>Звіт за період</h2>
+      <div class="form-group">
+        <label>З:</label>
+        <input type="month" id="from" />
+        <label>До:</label>
+        <input type="month" id="to" />
+        <button class="btn" onclick="generateReport()">📊 Показати звіт</button>
+        <button class="btn" onclick="exportToExcel()">📥 Експортувати у Excel</button>
+      </div>
+      <div id="report-output"></div>
+    </div>
+  </div>
+
+  <!-- Firebase SDK -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-app.js";
+    import { getFirestore, doc, getDoc, setDoc, getDocs, collection } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyBNoc5gDs5oiKMM2vfi9SLV0V81YIQlhIw",
+      authDomain: "electricitymonitoring-611d6.firebaseapp.com",
+      projectId: "electricitymonitoring-611d6",
+      storageBucket: "electricitymonitoring-611d6.appspot.com",
+      messagingSenderId: "48991179626",
+      appId: "1:48991179626:web:15bd1512333f0cd2258b13",
+      measurementId: "G-380QK2FKVP"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    let flats = [];
+
+    async function initData() {
+      flats = [];
+      const flatsCol = collection(db, 'flats');
+      const flatsSnapshot = await getDocs(flatsCol);
+
+      if (flatsSnapshot.empty) {
+        // Створимо 300 пустих квартир
+        for (let i = 1; i <= 300; i++) {
+          flats.push({ number: i, consumption: {} });
+          await setDoc(doc(db, "flats", i.toString()), { consumption: {} });
+        }
+      } else {
+        flatsSnapshot.forEach(docSnap => {
+          flats.push({ number: parseInt(docSnap.id), consumption: docSnap.data().consumption || {} });
+        });
+      }
+      populateFlatSelect();
+    }
+
+    function populateFlatSelect() {
+      const select = document.getElementById('flat-select');
+      select.innerHTML = '<option value="">— Виберіть квартиру —</option>';
+      flats.sort((a,b) => a.number - b.number).forEach(flat => {
+        const opt = document.createElement('option');
+        opt.value = flat.number;
+        opt.textContent = `Квартира №${flat.number}`;
+        select.appendChild(opt);
+      });
+    }
+
+    async function showFlatForm() {
+      const selected = document.getElementById('flat-select').value;
+      const form = document.getElementById('flat-form');
+      const dataBlock = document.getElementById('existing-data');
+      if (!selected) {
+        form.classList.add('hidden');
+        dataBlock.innerHTML = '';
+        return;
+      }
+      form.classList.remove('hidden');
+
+      // Завантажуємо свіжі дані по квартирі
+      const flatDoc = await getDoc(doc(db, "flats", selected));
+      if (!flatDoc.exists()) {
+        dataBlock.innerHTML = '<i>Немає даних.</i>';
+        return;
+      }
+      const flat = { number: parseInt(selected), consumption: flatDoc.data().consumption || {} };
+
+      const entries = Object.entries(flat.consumption);
+      if (entries.length === 0) {
+        dataBlock.innerHTML = '<i>Дані відсутні.</i>';
+        return;
+      }
+      let html = '<ul>';
+      entries.sort((a,b) => a[0].localeCompare(b[0])).forEach(([month, val]) => {
+        html += `<li>${month}: ${val} кВт·г 
+          <button onclick="deleteConsumption(${flat.number}, '${month}')">🗑️</button></li>`;
+      });
+      html += '</ul>';
+      dataBlock.innerHTML = html;
+    }
+
+    async function saveConsumption() {
+      const flatNum = parseInt(document.getElementById('flat-select').value);
+      const month = document.getElementById('flat-month').value;
+      const value = parseFloat(document.getElementById('flat-value').value);
+
+      if (!flatNum || !month || isNaN(value)) {
+        alert("❗ Заповніть усі поля коректно.");
+        return;
+      }
+
+      const flatRef = doc(db, "flats", flatNum.toString());
+      const flatSnap = await getDoc(flatRef);
+      if (!flatSnap.exists()) {
+        alert("❗ Квартира не знайдена.");
+        return;
+      }
+
+      const consumption = flatSnap.data().consumption || {};
+      consumption[month] = value;
+      await setDoc(flatRef, { consumption }, { merge: true });
+
+      // Оновити локальний масив flats (щоб звіт працював)
+      const flatIndex = flats.findIndex(f => f.number === flatNum);
+      if(flatIndex !== -1) flats[flatIndex].consumption = consumption;
+
+      showFlatForm();
+
+      document.getElementById('flat-month').value = '';
+      document.getElementById('flat-value').value = '';
+    }
+
+    async function deleteConsumption(flatNum, month) {
+      const flatRef = doc(db, "flats", flatNum.toString());
+      const flatSnap = await getDoc(flatRef);
+      if (!flatSnap.exists()) return;
+
+      const consumption = flatSnap.data().consumption || {};
+      if (consumption[month] !== undefined) {
+        delete consumption[month];
+        await setDoc(flatRef, { consumption }, { merge: true });
+
+        const flatIndex = flats.findIndex(f => f.number === flatNum);
+        if(flatIndex !== -1) flats[flatIndex].consumption = consumption;
+
+        showFlatForm();
+      }
+    }
+
+    function showSection(section) {
+      document.getElementById('section-flats').classList.toggle('hidden', section !== 'flats');
+      document.getElementById('section-report').classList.toggle('hidden', section !== 'report');
+
+      document.getElementById('btn-flats').classList.toggle('active', section === 'flats');
+      document.getElementById('btn-report').classList.toggle('active', section === 'report');
+    }
+
+    function generateReport() {
+      const from = document.getElementById('from').value;
+      const to = document.getElementById('to').value;
+      if (!from || !to || from > to) {
+        alert('Введіть коректний період.');
+        return;
+      }
+
+      let reportText = '';
+      flats.forEach(flat => {
+        let total = 0;
+        const months = Object.keys(flat.consumption || {}).filter(m => m >= from && m <= to);
+        if (months.length === 0) return;
+
+        reportText += `Квартира №${flat.number}:\n`;
+        months.forEach(month => {
+          const val = flat.consumption[month];
+          reportText += `  ${month}: ${val} кВт·г\n`;
+          total += val;
+        });
+        reportText += `  Всього: ${total.toFixed(2)} кВт·г\n\n`;
+      });
+
+      if (reportText === '') {
+        reportText = 'Дані за вказаний період відсутні.';
+      }
+
+      document.getElementById('report-output').textContent = reportText;
+    }
+
+    function exportToExcel() {
+      const from = document.getElementById('from').value;
+      const to = document.getElementById('to').value;
+      if (!from || !to || from > to) {
+        alert('Введіть коректний період.');
+        return;
+      }
+
+      let wb = XLSX.utils.book_new();
+
+      flats.forEach(flat => {
+        const months = Object.keys(flat.consumption || {}).filter(m => m >= from && m <= to);
+        if (months.length === 0) return;
+
+        let data = [['Місяць', 'Споживання (кВт·г)']];
+        months.forEach(month => {
+          data.push([month, flat.consumption[month]]);
+        });
+        const ws = XLSX.utils.aoa_to_sheet(data);
+        XLSX.utils.book_append_sheet(wb, ws, `Квартира_${flat.number}`);
+      });
+
+      XLSX.writeFile(wb, `Звіт_${from}_до_${to}.xlsx`);
+    }
+
+    window.showSection = showSection; // щоб виклики з onclick працювали
+    window.saveConsumption = saveConsumption;
+    window.deleteConsumption = deleteConsumption;
+    window.generateReport = generateReport;
+    window.exportToExcel = exportToExcel;
+    window.showFlatForm = showFlatForm;
+
+    window.onload = initData;
+  </script>
+</body>
+</html>
